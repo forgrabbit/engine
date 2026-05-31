@@ -1,6 +1,13 @@
 // sort blind set of data
 function SortWorker() {
     const myself = (typeof self !== 'undefined' && self) || (require('node:worker_threads').parentPort);
+    const absNow = () => {
+        if (typeof performance === 'undefined') {
+            return Date.now();
+        }
+
+        return (performance.timeOrigin ?? (Date.now() - performance.now())) + performance.now();
+    };
 
     let order;
     let centers;
@@ -8,6 +15,7 @@ function SortWorker() {
     let mapping;
     let cameraPosition;
     let cameraDirection;
+    let profile;
 
     let forceUpdate = false;
 
@@ -44,6 +52,11 @@ function SortWorker() {
     const update = () => {
         if (!order || !centers || centers.length === 0 || !cameraPosition || !cameraDirection) return;
 
+        const activeProfile = profile;
+        if (activeProfile) {
+            activeProfile.workerStartAbs = absNow();
+        }
+
         const sortStartTime = performance.now();
 
         const px = cameraPosition.x;
@@ -62,6 +75,7 @@ function SortWorker() {
             Math.abs(dx - lastCameraDirection.x) < epsilon &&
             Math.abs(dy - lastCameraDirection.y) < epsilon &&
             Math.abs(dz - lastCameraDirection.z) < epsilon) {
+            profile = null;
             return;
         }
 
@@ -196,23 +210,42 @@ function SortWorker() {
             }
         }
 
+        const sortTime = performance.now() - sortStartTime;
+        if (activeProfile) {
+            activeProfile.workerEndAbs = absNow();
+            activeProfile.workerSortMs = sortTime;
+            activeProfile.sortTime = sortTime;
+            activeProfile.drawSplats = count;
+            activeProfile.count = count;
+            activeProfile.numVertices = numVertices;
+        }
+
         // send results
         myself.postMessage({
             order: order.buffer,
             count,
-            sortTime: performance.now() - sortStartTime
+            sortTime,
+            profile: activeProfile
         }, [order.buffer]);
 
         order = null;
+        profile = null;
     };
 
     myself.addEventListener('message', (message) => {
         const msgData = message.data ?? message;
+        if (msgData.profile) {
+            profile = {
+                ...msgData.profile,
+                workerReceiveAbs: absNow()
+            };
+        }
 
         if (msgData.order) {
             order = new Uint32Array(msgData.order);
         }
         if (msgData.centers) {
+            const workerPrepareStart = performance.now();
             centers = new Float32Array(msgData.centers);
             forceUpdate = true;
 
@@ -299,6 +332,10 @@ function SortWorker() {
                     chunks[c * 4 + 2] = (mz + Mz) * 0.5;
                     chunks[c * 4 + 3] = Math.sqrt((Mx - mx) ** 2 + (My - my) ** 2 + (Mz - mz) ** 2) * 0.5;
                 }
+            }
+
+            if (profile) {
+                profile.workerPrepareMs = performance.now() - workerPrepareStart;
             }
         }
         if (msgData.hasOwnProperty('mapping')) {
