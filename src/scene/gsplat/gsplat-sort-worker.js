@@ -50,7 +50,7 @@ function SortWorker() {
     };
 
     const update = () => {
-        if (!order || !centers || centers.length === 0 || !cameraPosition || !cameraDirection) return;
+        if (!order || !centers || !cameraPosition || !cameraDirection) return;
 
         const activeProfile = profile;
         if (activeProfile) {
@@ -88,6 +88,30 @@ function SortWorker() {
         lastCameraDirection.y = dy;
         lastCameraDirection.z = dz;
 
+        const numVertices = centers.length / 3;
+        if (numVertices === 0) {
+            const sortTime = performance.now() - sortStartTime;
+            if (activeProfile) {
+                activeProfile.workerEndAbs = absNow();
+                activeProfile.workerSortMs = sortTime;
+                activeProfile.sortTime = sortTime;
+                activeProfile.drawSplats = 0;
+                activeProfile.count = 0;
+                activeProfile.numVertices = 0;
+            }
+
+            myself.postMessage({
+                order: order.buffer,
+                count: 0,
+                sortTime,
+                profile: activeProfile
+            }, [order.buffer]);
+
+            order = null;
+            profile = null;
+            return;
+        }
+
         // calc min/max distance using bound
         let minDist;
         let maxDist;
@@ -103,8 +127,6 @@ function SortWorker() {
                 maxDist = Math.max(maxDist, d);
             }
         }
-
-        const numVertices = centers.length / 3;
 
         // calculate number of bits needed to store sorting result
         const compareBits = Math.max(10, Math.min(20, Math.round(Math.log2(numVertices / 4))));
